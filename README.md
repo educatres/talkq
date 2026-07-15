@@ -35,7 +35,7 @@ extra_json
 3. 將 Google Sheet 權限改為「知道連結的任何人」且角色為「檢視者」。
 4. 在 Google Form 選擇「預先填寫表單」，每個欄位填入其欄位名稱，例如 `talk_id` 欄填入 `talk_id`。
 5. 取得預填連結，貼入 TalkQ 設定頁，自動解析 `entry.xxxxx`。
-6. 輸入 Google Sheet ID、工作表名稱及 Google Form 網址。
+6. 貼上 Google Sheet 分享網址，輸入工作表名稱及 Google Form 網址。
 7. 選擇「直接公開」或「審核後公開」。
 8. 產生提問頁、講師管理頁、公開清單三組網址與 QR Code。
 
