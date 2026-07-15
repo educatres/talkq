@@ -1,0 +1,1 @@
+export function renderQr(target,text,size=180){target.innerHTML='';if(!window.QRCode){target.textContent='QR Code 載入失敗';return}new QRCode(target,{text,width:size,height:size,correctLevel:QRCode.CorrectLevel.M})}
