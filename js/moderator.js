@@ -107,8 +107,12 @@ function showExpired() {
 }
 
 async function enterModerator(key = '') {
-  if (key) await claimModeratorAccess(talkId, key);
-  if (!await isCurrentUserModerator(talkId)) return false;
+  let hasAccess = await isCurrentUserModerator(talkId);
+  if (!hasAccess && key) {
+    await claimModeratorAccess(talkId, key);
+    hasAccess = await isCurrentUserModerator(talkId);
+  }
+  if (!hasAccess) return false;
   $('authGate').classList.add('hidden');
   $('workspace').classList.remove('hidden');
   await subscribeToQuestions(talkId, (items) => {
