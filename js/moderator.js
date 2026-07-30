@@ -1,10 +1,13 @@
 import {
   claimModeratorAccess,
+  deleteTalk,
   getTalkSettings,
   isCurrentUserModerator,
   scheduleExpiryCleanup,
   setQuestionVisibility,
+  setTalkQuestionsOpen,
   subscribeToQuestions,
+  subscribeToTalkSettings,
 } from './firebase-store.js';
 import { renderQr } from './qr.js';
 import {
@@ -21,6 +24,8 @@ const $ = (id) => document.getElementById(id);
 let talkId;
 let settings;
 let questions = [];
+let stopQuestionsSubscription;
+let stopSettingsSubscription;
 
 function statusText(value) {
   return ({ pending: '待審核', published: '已公開', hidden: '已隱藏', private: '不公開' })[value] || value;
@@ -31,7 +36,65 @@ function updateStats() {
   $('sPending').textContent = questions.filter((item) => item.visibility === 'pending').length;
   $('sPublished').textContent = questions.filter((item) => item.visibility === 'published').length;
   $('sHidden').textContent = questions.filter((item) => ['hidden', 'private'].includes(item.visibility)).length;
-  $('sync').textContent = `即時同步｜剩餘 ${formatRemaining(settings.expires_at)}`;
+  $('sync').textContent = `即時同步｜自動刪除時間：剩餘 ${formatRemaining(settings.expires_at)}`;
+}
+
+function csvValue(value) {
+  const text = String(value ?? '');
+  const safeText = /^[=+\-@]/.test(text) ? `'${text}` : text;
+  return `"${safeText.replaceAll('"', '""')}"`;
+}
+
+function csvTime(value) {
+  const date = new Date(Number(value));
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('zh-TW', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
+function downloadQuestionsCsv() {
+  const columns = ['調查 ID', '演講名稱', '提問 ID', '暱稱', '問題內容', '同意公開', '狀態', '提問時間', '最後更新時間'];
+  const rows = questions.map((question) => [
+    talkId,
+    settings.title,
+    question.question_id,
+    question.nickname,
+    question.question_text,
+    question.submitter_allows_public ? '是' : '否',
+    statusText(question.visibility),
+    csvTime(question.created_at),
+    csvTime(question.updated_at),
+  ]);
+  const csv = [columns, ...rows].map((row) => row.map(csvValue).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const safeTitle = settings.title.replace(/[\\/:*?"<>|]+/g, '-').trim().slice(0, 60) || 'TalkQ';
+  link.href = url;
+  link.download = `${safeTitle}-${talkId}-全部提問.csv`;
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  setNotice($('notice'), `已下載 ${questions.length} 筆提問資料。`, 'success');
+}
+
+function updateTalkControls() {
+  const questionsOpen = settings?.questions_open !== false;
+  const state = $('questionsState');
+  const toggle = $('toggleQuestions');
+  state.textContent = questionsOpen ? '提問開放中' : '提問已關閉';
+  state.className = `badge ${questionsOpen ? 'open' : 'closed'}`;
+  toggle.textContent = questionsOpen ? '關閉提問' : '重新開啟提問';
+  toggle.className = `btn ${questionsOpen ? 'btn-danger' : 'btn-success'}`;
 }
 
 function render() {
@@ -115,12 +178,55 @@ async function enterModerator(key = '') {
   if (!hasAccess) return false;
   $('authGate').classList.add('hidden');
   $('workspace').classList.remove('hidden');
-  await subscribeToQuestions(talkId, (items) => {
+  stopSettingsSubscription?.();
+  stopQuestionsSubscription?.();
+  stopSettingsSubscription = await subscribeToTalkSettings(talkId, (nextSettings) => {
+    if (!nextSettings) {
+      $('workspace').classList.add('hidden');
+      setNotice($('notice'), '這個問題留言板已被刪除。', 'warn');
+      return;
+    }
+    settings = nextSettings;
+    updateTalkControls();
+    updateStats();
+  }, () => setNotice($('notice'), '提問狀態同步中斷，請重新整理頁面。', 'error'));
+  stopQuestionsSubscription = await subscribeToQuestions(talkId, (items) => {
     questions = items;
     updateStats();
     render();
   }, () => setNotice($('notice'), '即時同步中斷，請重新整理頁面。', 'error'));
   return true;
+}
+
+async function toggleQuestions() {
+  const button = $('toggleQuestions');
+  const nextOpen = settings.questions_open === false;
+  button.disabled = true;
+  try {
+    await setTalkQuestionsOpen(talkId, nextOpen);
+    settings.questions_open = nextOpen;
+    updateTalkControls();
+    setNotice($('notice'), nextOpen ? '已重新開啟提問。' : '已關閉提問，聽眾暫時無法投稿。', 'success');
+  } catch (error) {
+    setNotice($('notice'), `操作失敗：${error.message}`, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function removeTalk() {
+  if (!window.confirm(`確定要永久刪除「${settings.title}」與所有提問嗎？此操作無法復原。`)) return;
+  const deleteButton = $('deleteTalk');
+  deleteButton.disabled = true;
+  $('toggleQuestions').disabled = true;
+  try {
+    await deleteTalk(talkId);
+    window.location.assign('./index.html');
+  } catch (error) {
+    setNotice($('notice'), `刪除失敗：${error.message}`, 'error');
+    deleteButton.disabled = false;
+    $('toggleQuestions').disabled = false;
+  }
 }
 
 async function initialize() {
@@ -169,4 +275,7 @@ $('filter').onchange = render;
 $('sort').onchange = render;
 $('search').oninput = debounce(render, 150);
 $('refresh').onclick = () => location.reload();
+$('downloadCsv').onclick = downloadQuestionsCsv;
+$('toggleQuestions').onclick = toggleQuestions;
+$('deleteTalk').onclick = removeTalk;
 initialize();

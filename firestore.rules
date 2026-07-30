@@ -18,6 +18,11 @@ service cloud.firestore {
       return exists(talkPath(talkId)) && request.time < talk(talkId).expires_at;
     }
 
+    function questionsOpen(talkId) {
+      return !talk(talkId).keys().hasAny(['questions_open'])
+        || talk(talkId).questions_open == true;
+    }
+
     function adminPath(talkId, uid) {
       return /databases/$(database)/documents/talks/$(talkId)/admins/$(uid);
     }
@@ -29,11 +34,13 @@ service cloud.firestore {
 
     function validTalk(data, talkId) {
       return data.keys().hasOnly([
-          'talk_id', 'title', 'default_publish_mode', 'owner_uid', 'created_at', 'expires_at'
+          'talk_id', 'title', 'default_publish_mode', 'questions_open',
+          'owner_uid', 'created_at', 'expires_at'
         ])
         && data.talk_id == talkId
         && data.title is string && data.title.size() > 0 && data.title.size() <= 100
         && data.default_publish_mode in ['moderated', 'auto_public']
+        && data.questions_open is bool
         && data.owner_uid == request.auth.uid
         && data.created_at is timestamp && data.expires_at is timestamp
         && data.created_at >= request.time - duration.value(1, 'm')
@@ -52,8 +59,11 @@ service cloud.firestore {
       allow get: if signedIn();
       allow list: if false;
       allow create: if signedIn() && validTalk(request.resource.data, talkId);
-      allow update: if false;
-      allow delete: if signedIn() && request.time >= resource.data.expires_at;
+      allow update: if isAdmin(talkId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['questions_open'])
+        && request.resource.data.questions_open is bool;
+      allow delete: if isAdmin(talkId)
+        || (signedIn() && request.time >= resource.data.expires_at);
 
       match /admins/{uid} {
         allow get: if signedIn() && (request.auth.uid == uid || isAdmin(talkId));
@@ -72,8 +82,9 @@ service cloud.firestore {
             )
           );
         allow update: if false;
-        allow delete: if signedIn() && request.auth.uid == uid
-          && request.time >= resource.data.expires_at;
+        allow delete: if isAdmin(talkId)
+          || (signedIn() && request.auth.uid == uid
+            && request.time >= resource.data.expires_at);
       }
 
       match /questions/{questionId} {
@@ -81,7 +92,7 @@ service cloud.firestore {
           isAdmin(talkId)
           || (resource.data.visibility == 'published' && resource.data.submitter_allows_public == true)
         );
-        allow create: if signedIn() && active(talkId)
+        allow create: if signedIn() && active(talkId) && questionsOpen(talkId)
           && request.resource.data.keys().hasOnly([
             'question_id', 'talk_id', 'owner_uid', 'nickname', 'question_text',
             'submitter_allows_public', 'visibility', 'created_at', 'updated_at', 'expires_at'
@@ -115,7 +126,8 @@ service cloud.firestore {
           && request.resource.data.updated_at is timestamp
           && request.resource.data.updated_at >= request.time - duration.value(1, 'm')
           && request.resource.data.updated_at <= request.time + duration.value(1, 'm');
-        allow delete: if signedIn() && request.time >= resource.data.expires_at;
+        allow delete: if isAdmin(talkId)
+          || (signedIn() && request.time >= resource.data.expires_at);
       }
     }
 
@@ -126,7 +138,8 @@ service cloud.firestore {
         && getAfter(talkPath(talkId)).data.owner_uid == request.auth.uid
         && validTalkDirectory(request.resource.data, talkId);
       allow update: if false;
-      allow delete: if signedIn() && request.time >= resource.data.expires_at;
+      allow delete: if isAdmin(talkId)
+        || (signedIn() && request.time >= resource.data.expires_at);
     }
 
     match /moderatorKeys/{talkId} {
@@ -142,7 +155,8 @@ service cloud.firestore {
         && request.resource.data.key.matches('^[0-9]{6}$')
         && request.resource.data.expires_at == getAfter(talkPath(talkId)).data.expires_at;
       allow update: if false;
-      allow delete: if signedIn() && request.time >= resource.data.expires_at;
+      allow delete: if isAdmin(talkId)
+        || (signedIn() && request.time >= resource.data.expires_at);
     }
 
     match /moderatorClaims/{claimId} {
@@ -157,8 +171,9 @@ service cloud.firestore {
           == get(/databases/$(database)/documents/moderatorKeys/$(request.resource.data.talk_id)).data.key
         && request.resource.data.expires_at == talk(request.resource.data.talk_id).expires_at;
       allow update: if false;
-      allow delete: if signedIn() && request.auth.uid == resource.data.uid
-        && request.time >= resource.data.expires_at;
+      allow delete: if isAdmin(resource.data.talk_id)
+        || (signedIn() && request.auth.uid == resource.data.uid
+          && request.time >= resource.data.expires_at);
     }
   }
 }
