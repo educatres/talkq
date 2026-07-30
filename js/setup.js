@@ -1,11 +1,115 @@
-import {FIELD_NAMES,randomId,parsePrefill,buildParams,formResponseUrl,parseSheetId,setNotice,copyText,downloadCanvas} from './utils.js';
-import {renderQr} from './qr.js';
-const $=id=>document.getElementById(id),notice=$('notice'),parseNotice=$('parseNotice'),fieldArea=$('fieldArea'),outputs=$('outputs');
-function initFields(){fieldArea.innerHTML='';for(const n of FIELD_NAMES){const d=document.createElement('div');d.className='field compact';const l=document.createElement('label');l.textContent=n;const i=document.createElement('input');i.className='input';i.id=`field_${n}`;i.placeholder='entry.123456';d.append(l,i);fieldArea.append(d)}}
-function newTalkId(){$('talkId').value=randomId('talk')}
-function collect(){const fields={};for(const n of FIELD_NAMES)fields[n]=$(`field_${n}`).value.trim();const sheetUrl=$('sheetUrl').value.trim();return{talkId:$('talkId').value.trim(),talkTitle:$('talkTitle').value.trim(),sheetUrl,sheetId:parseSheetId(sheetUrl),sheetName:$('sheetName').value.trim(),gid:$('gid').value.trim(),formUrl:formResponseUrl($('formUrl').value),defaultPublishMode:$('publishMode').value,fields}}
-function validate(c){if(!c.talkId||!c.talkTitle||!c.sheetId||!c.formUrl)throw new Error('請填寫演講名稱、演講 ID、Google Sheet 分享網址與 Google Form 網址。');const missing=FIELD_NAMES.filter(n=>n!=='extra_json'&&!c.fields[n]);if(missing.length)throw new Error(`尚缺 entry ID：${missing.join(', ')}`)}
-function fill(c){$('talkId').value=c.talkId||'';$('talkTitle').value=c.talkTitle||'';$('sheetUrl').value=c.sheetUrl||c.sheetId&&`https://docs.google.com/spreadsheets/d/${c.sheetId}/edit`||'';$('sheetName').value=c.sheetName||'表單回應 1';$('gid').value=c.gid||'';$('formUrl').value=c.formUrl||'';$('publishMode').value=c.defaultPublishMode||'moderated';for(const n of FIELD_NAMES)$(`field_${n}`).value=c.fields?.[n]||''}
-function card(label,url,key){const box=document.createElement('div');box.className='link-box';const h=document.createElement('h3');h.textContent=label;const qr=document.createElement('div');qr.className='qr';const out=document.createElement('div');out.className='url-output';out.textContent=url;const row=document.createElement('div');row.className='button-row';row.style.justifyContent='center';const cp=document.createElement('button');cp.className='btn';cp.textContent='複製網址';cp.onclick=()=>copyText(url).then(()=>setNotice(notice,'網址已複製。','success'));const dl=document.createElement('button');dl.className='btn';dl.textContent='下載 QR';dl.onclick=()=>{const canvas=qr.querySelector('canvas');if(canvas)downloadCanvas(canvas,`${key}-qr.png`)};const open=document.createElement('a');open.className='btn btn-primary';open.textContent='開啟';open.href=url;open.target='_blank';row.append(cp,dl,open);box.append(h,qr,out,row);setTimeout(()=>renderQr(qr,url),0);return box}
-function generate(){try{const c=collect();validate(c);const base=new URL('.',location.href);const ask=new URL('ask.html',base);ask.search=buildParams(c,true);const mod=new URL('moderator.html',base);mod.search=buildParams(c,true);const pub=new URL('public.html',base);pub.search=buildParams(c,false);outputs.innerHTML='';outputs.append(card('1. 提問專用頁',ask.toString(),'ask'),card('2. 講師管理頁',mod.toString(),'moderator'),card('3. 公開問題清單',pub.toString(),'public'));outputs.classList.remove('hidden');localStorage.setItem('talkq:setup',JSON.stringify(c));setNotice(notice,'三組連結已產生，設定也已保存在這台裝置。','success')}catch(e){setNotice(notice,e.message,'error')}}
-initFields();newTalkId();$('newId').onclick=newTalkId;$('toggleFields').onclick=()=>fieldArea.classList.toggle('hidden');$('parsePrefill').onclick=()=>{const parsed=parsePrefill($('prefillUrl').value);for(const [n,id] of Object.entries(parsed))$(`field_${n}`).value=id;fieldArea.classList.remove('hidden');const missing=FIELD_NAMES.filter(n=>!parsed[n]);setNotice(parseNotice,missing.length?`已解析 ${Object.keys(parsed).length} 個欄位；尚未找到：${missing.join(', ')}`:'已自動帶入全部 entry ID。',missing.length?'warn':'success')};$('generate').onclick=generate;$('save').onclick=()=>{localStorage.setItem('talkq:setup',JSON.stringify(collect()));setNotice(notice,'設定已儲存。','success')};$('load').onclick=()=>{try{const c=JSON.parse(localStorage.getItem('talkq:setup'));if(!c)throw new Error('找不到已儲存的設定。');fill(c);setNotice(notice,'已載入設定。','success')}catch(e){setNotice(notice,e.message,'error')}};
+import { createTalk } from './firebase-store.js';
+import { renderQr } from './qr.js';
+import {
+  buildTalkUrl,
+  copyText,
+  downloadCanvas,
+  randomId,
+  randomPin,
+  setNotice,
+} from './utils.js';
+
+const $ = (id) => document.getElementById(id);
+const notice = $('notice');
+const outputs = $('outputs');
+
+function newTalkId() {
+  $('talkId').value = randomId('talk');
+}
+
+function linkCard(label, url, key) {
+  const box = document.createElement('div');
+  box.className = 'link-box';
+  const heading = document.createElement('h3');
+  heading.textContent = label;
+  const qr = document.createElement('div');
+  qr.className = 'qr';
+  const output = document.createElement('div');
+  output.className = 'url-output';
+  output.textContent = url;
+  const row = document.createElement('div');
+  row.className = 'button-row';
+  row.style.justifyContent = 'center';
+
+  const copy = document.createElement('button');
+  copy.className = 'btn';
+  copy.textContent = '複製網址';
+  copy.onclick = () => copyText(url).then(() => setNotice(notice, '網址已複製。', 'success'));
+
+  const download = document.createElement('button');
+  download.className = 'btn';
+  download.textContent = '下載 QR';
+  download.onclick = () => {
+    const canvas = qr.querySelector('canvas');
+    if (canvas) downloadCanvas(canvas, `${key}-qr.png`);
+  };
+
+  const open = document.createElement('a');
+  open.className = 'btn btn-primary';
+  open.textContent = '開啟';
+  open.href = url;
+  open.target = '_blank';
+  open.rel = 'noopener';
+  row.append(copy, download, open);
+  box.append(heading, qr, output, row);
+  setTimeout(() => renderQr(qr, url), 0);
+  return box;
+}
+
+function rememberTalk(talk) {
+  const key = 'talkq:created-talks:v2';
+  let talks = [];
+  try {
+    talks = JSON.parse(localStorage.getItem(key)) || [];
+  } catch {
+    talks = [];
+  }
+  talks = [talk, ...talks.filter((item) => item.talkId !== talk.talkId)].slice(0, 20);
+  localStorage.setItem(key, JSON.stringify(talks));
+}
+
+async function generate() {
+  const talkId = $('talkId').value.trim();
+  const talkTitle = $('talkTitle').value.trim();
+  const defaultPublishMode = $('publishMode').value;
+  if (!talkId || !talkTitle) {
+    setNotice(notice, '請填寫演講名稱與演講 ID。', 'error');
+    return;
+  }
+
+  const button = $('generate');
+  button.disabled = true;
+  setNotice(notice, '正在建立三天有效的 Firebase 問題留言板…');
+  try {
+    const moderatorKey = randomPin(6);
+    const settings = await createTalk({ talkId, talkTitle, defaultPublishMode, moderatorKey });
+    const askUrl = buildTalkUrl('ask.html', talkId);
+    const moderatorUrl = buildTalkUrl('moderator.html', talkId, { moderator_key: moderatorKey });
+    const publicUrl = buildTalkUrl('public.html', talkId);
+
+    outputs.innerHTML = '';
+    outputs.append(
+      linkCard('1. 提問專用頁', askUrl, 'ask'),
+      linkCard('2. 講師管理頁', moderatorUrl, 'moderator'),
+      linkCard('3. 公開問題清單', publicUrl, 'public'),
+    );
+    outputs.classList.remove('hidden');
+    $('moderatorKey').textContent = moderatorKey;
+    $('expiresAt').textContent = new Date(settings.expires_at).toLocaleString('zh-TW');
+    $('credentials').classList.remove('hidden');
+    rememberTalk({ talkId, talkTitle, moderatorKey, moderatorUrl, expiresAt: settings.expires_at });
+    setNotice(notice, '留言板已建立。請妥善保存講師管理網址；三天後資料會到期並清除。', 'success');
+    newTalkId();
+  } catch (error) {
+    const message = error?.code === 'PERMISSION_DENIED'
+      ? '建立失敗：請確認 Firebase 匿名驗證與資料庫規則已部署。'
+      : `建立失敗：${error.message || '請稍後再試。'}`;
+    setNotice(notice, message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+newTalkId();
+$('newId').onclick = newTalkId;
+$('generate').onclick = generate;

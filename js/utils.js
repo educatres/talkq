@@ -1,15 +1,91 @@
-export const FIELD_NAMES=['talk_id','event_type','question_id','nickname','question_text','submitter_allows_public','visibility','client_timestamp','actor_session_id','talk_title','default_publish_mode','extra_json'];
-export function qs(name){return new URLSearchParams(location.search).get(name)||''}
-export function randomId(prefix='id'){const bytes=new Uint8Array(6);crypto.getRandomValues(bytes);return `${prefix}_${Date.now().toString(36)}_${[...bytes].map(b=>b.toString(36)).join('')}`}
-export function getSessionId(){const k='talkq:actor_session_id';let v=localStorage.getItem(k);if(!v){v=randomId('usr');localStorage.setItem(k,v)}return v}
-export function formResponseUrl(value){try{const u=new URL(value.trim());u.pathname=u.pathname.replace(/\/(viewform|edit)\/?$/,'/formResponse');return u.toString()}catch{return value.trim()}}
-export function parseSheetId(value){const raw=String(value||'').trim();if(!raw)return'';try{const u=new URL(raw);const match=u.pathname.match(/\/spreadsheets\/d\/([^/]+)/);if(match)return decodeURIComponent(match[1]);const id=u.searchParams.get('id');if(id)return id.trim()}catch{}return raw}
-export function parsePrefill(url){const out={};try{const u=new URL(url);for(const [key,value] of u.searchParams.entries()){if(key.startsWith('entry.')){const match=FIELD_NAMES.find(n=>value.trim()===n);if(match)out[match]=key}}}catch{}return out}
-export function buildParams(config,includeWrite=true){const p=new URLSearchParams({talk_id:config.talkId,talk_title:config.talkTitle,sheet_id:config.sheetId});if(config.sheetName)p.set('sheet_name',config.sheetName);if(config.gid)p.set('gid',config.gid);p.set('default_publish_mode',config.defaultPublishMode);if(includeWrite){p.set('form_url',config.formUrl);for(const [name,id] of Object.entries(config.fields))if(id)p.set(`field_${name}`,id)}return p}
-export function configFromUrl(requireWrite=false){const fields={};for(const n of FIELD_NAMES)fields[n]=qs(`field_${n}`);const c={talkId:qs('talk_id'),talkTitle:qs('talk_title')||'演講提問',sheetId:qs('sheet_id'),sheetName:qs('sheet_name'),gid:qs('gid'),formUrl:qs('form_url'),defaultPublishMode:qs('default_publish_mode')||'moderated',fields};if(!c.talkId||!c.sheetId||(requireWrite&&(!c.formUrl||FIELD_NAMES.slice(0,-1).some(n=>!fields[n]))))throw new Error('網址設定不完整，請回到設定頁重新產生連結。');return c}
-export function formatTime(iso){const d=new Date(iso);return Number.isNaN(d.getTime())?'時間不明':new Intl.DateTimeFormat('zh-TW',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(d)}
-export function setNotice(el,msg,type=''){el.textContent=msg;el.className=`notice ${type}`.trim();el.classList.remove('hidden')}
-export function copyText(text){return navigator.clipboard?.writeText(text).catch(()=>fallbackCopy(text))||fallbackCopy(text)}
-function fallbackCopy(text){const t=document.createElement('textarea');t.value=text;document.body.append(t);t.select();document.execCommand('copy');t.remove();return Promise.resolve()}
-export function debounce(fn,ms){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms)}}
-export function downloadCanvas(canvas,name){const a=document.createElement('a');a.download=name;a.href=canvas.toDataURL('image/png');a.click()}
+export function qs(name) {
+  return new URLSearchParams(location.search).get(name) || '';
+}
+
+export function randomId(prefix = 'id') {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  const suffix = [...bytes].map((byte) => byte.toString(36).padStart(2, '0')).join('');
+  return `${prefix}_${Date.now().toString(36)}_${suffix}`;
+}
+
+export function randomPin(length = 6) {
+  const bytes = new Uint32Array(length);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((value) => String(value % 10)).join('');
+}
+
+export function talkIdFromUrl() {
+  const talkId = qs('talk_id');
+  if (!/^talk_[a-z0-9_]+$/i.test(talkId)) {
+    throw new Error('網址缺少有效的演講 ID，請向講師索取正確連結。');
+  }
+  return talkId;
+}
+
+export function buildTalkUrl(page, talkId, extra = {}) {
+  const url = new URL(page, new URL('.', location.href));
+  url.searchParams.set('talk_id', talkId);
+  Object.entries(extra).forEach(([name, value]) => {
+    if (value) url.searchParams.set(name, value);
+  });
+  return url.toString();
+}
+
+export function formatTime(value) {
+  const date = new Date(Number(value));
+  return Number.isNaN(date.getTime())
+    ? '時間不明'
+    : new Intl.DateTimeFormat('zh-TW', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(date);
+}
+
+export function formatRemaining(expiresAt) {
+  const remaining = Number(expiresAt) - Date.now();
+  if (remaining <= 0) return '已到期';
+  const days = Math.floor(remaining / 86400000);
+  const hours = Math.floor((remaining % 86400000) / 3600000);
+  const minutes = Math.floor((remaining % 3600000) / 60000);
+  return `${days} 天 ${hours} 小時 ${minutes} 分`;
+}
+
+export function setNotice(element, message, type = '') {
+  element.textContent = message;
+  element.className = `notice ${type}`.trim();
+  element.classList.remove('hidden');
+}
+
+export function copyText(text) {
+  return navigator.clipboard?.writeText(text).catch(() => fallbackCopy(text)) || fallbackCopy(text);
+}
+
+function fallbackCopy(text) {
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  document.body.append(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  textarea.remove();
+  return Promise.resolve();
+}
+
+export function debounce(fn, milliseconds) {
+  let timer;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), milliseconds);
+  };
+}
+
+export function downloadCanvas(canvas, name) {
+  const link = document.createElement('a');
+  link.download = name;
+  link.href = canvas.toDataURL('image/png');
+  link.click();
+}

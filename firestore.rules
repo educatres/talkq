@@ -1,0 +1,147 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function talkPath(talkId) {
+      return /databases/$(database)/documents/talks/$(talkId);
+    }
+
+    function talk(talkId) {
+      return get(talkPath(talkId)).data;
+    }
+
+    function active(talkId) {
+      return exists(talkPath(talkId)) && request.time < talk(talkId).expires_at;
+    }
+
+    function adminPath(talkId, uid) {
+      return /databases/$(database)/documents/talks/$(talkId)/admins/$(uid);
+    }
+
+    function isAdmin(talkId) {
+      return signedIn() && active(talkId)
+        && (talk(talkId).owner_uid == request.auth.uid || exists(adminPath(talkId, request.auth.uid)));
+    }
+
+    function validTalk(data, talkId) {
+      return data.keys().hasOnly([
+          'talk_id', 'title', 'default_publish_mode', 'owner_uid', 'created_at', 'expires_at'
+        ])
+        && data.talk_id == talkId
+        && data.title is string && data.title.size() > 0 && data.title.size() <= 100
+        && data.default_publish_mode in ['moderated', 'auto_public']
+        && data.owner_uid == request.auth.uid
+        && data.created_at is timestamp && data.expires_at is timestamp
+        && data.created_at >= request.time - duration.value(1, 'm')
+        && data.created_at <= request.time + duration.value(1, 'm')
+        && data.expires_at == data.created_at + duration.value(3, 'd');
+    }
+
+    match /talks/{talkId} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn() && validTalk(request.resource.data, talkId);
+      allow update: if false;
+      allow delete: if signedIn() && request.time >= resource.data.expires_at;
+
+      match /admins/{uid} {
+        allow get: if signedIn() && (request.auth.uid == uid || isAdmin(talkId));
+        allow list: if isAdmin(talkId);
+        allow create: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['talk_id', 'uid', 'expires_at'])
+          && request.resource.data.talk_id == talkId
+          && request.resource.data.uid == uid
+          && request.resource.data.expires_at == getAfter(talkPath(talkId)).data.expires_at
+          && (
+            getAfter(talkPath(talkId)).data.owner_uid == uid
+            || (
+              existsAfter(/databases/$(database)/documents/moderatorClaims/$(talkId + '_' + uid))
+              && getAfter(/databases/$(database)/documents/moderatorClaims/$(talkId + '_' + uid)).data.key
+                == get(/databases/$(database)/documents/moderatorKeys/$(talkId)).data.key
+            )
+          );
+        allow update: if false;
+        allow delete: if signedIn() && request.auth.uid == uid
+          && request.time >= resource.data.expires_at;
+      }
+
+      match /questions/{questionId} {
+        allow get, list: if active(talkId) && (
+          isAdmin(talkId)
+          || (resource.data.visibility == 'published' && resource.data.submitter_allows_public == true)
+        );
+        allow create: if signedIn() && active(talkId)
+          && request.resource.data.keys().hasOnly([
+            'question_id', 'talk_id', 'owner_uid', 'nickname', 'question_text',
+            'submitter_allows_public', 'visibility', 'created_at', 'updated_at', 'expires_at'
+          ])
+          && request.resource.data.question_id == questionId
+          && request.resource.data.talk_id == talkId
+          && request.resource.data.owner_uid == request.auth.uid
+          && request.resource.data.nickname is string
+          && request.resource.data.nickname.size() > 0 && request.resource.data.nickname.size() <= 30
+          && request.resource.data.question_text is string
+          && request.resource.data.question_text.size() > 0 && request.resource.data.question_text.size() <= 300
+          && request.resource.data.submitter_allows_public is bool
+          && request.resource.data.created_at is timestamp
+          && request.resource.data.updated_at == request.resource.data.created_at
+          && request.resource.data.created_at >= request.time - duration.value(1, 'm')
+          && request.resource.data.created_at <= request.time + duration.value(1, 'm')
+          && request.resource.data.expires_at == talk(talkId).expires_at
+          && (
+            (!request.resource.data.submitter_allows_public && request.resource.data.visibility == 'private')
+            || (request.resource.data.submitter_allows_public
+              && talk(talkId).default_publish_mode == 'auto_public'
+              && request.resource.data.visibility == 'published')
+            || (request.resource.data.submitter_allows_public
+              && talk(talkId).default_publish_mode == 'moderated'
+              && request.resource.data.visibility == 'pending')
+          );
+        allow update: if isAdmin(talkId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['visibility', 'updated_at'])
+          && request.resource.data.visibility in ['pending', 'published', 'hidden', 'private']
+          && (request.resource.data.submitter_allows_public || request.resource.data.visibility != 'published')
+          && request.resource.data.updated_at is timestamp
+          && request.resource.data.updated_at >= request.time - duration.value(1, 'm')
+          && request.resource.data.updated_at <= request.time + duration.value(1, 'm');
+        allow delete: if signedIn() && request.time >= resource.data.expires_at;
+      }
+    }
+
+    match /moderatorKeys/{talkId} {
+      allow get: if isAdmin(talkId);
+      allow list: if false;
+      allow create: if signedIn()
+        && existsAfter(talkPath(talkId))
+        && request.time < getAfter(talkPath(talkId)).data.expires_at
+        && getAfter(talkPath(talkId)).data.owner_uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(['talk_id', 'key', 'expires_at'])
+        && request.resource.data.talk_id == talkId
+        && request.resource.data.key is string
+        && request.resource.data.key.matches('^[0-9]{6}$')
+        && request.resource.data.expires_at == getAfter(talkPath(talkId)).data.expires_at;
+      allow update: if false;
+      allow delete: if signedIn() && request.time >= resource.data.expires_at;
+    }
+
+    match /moderatorClaims/{claimId} {
+      allow get: if signedIn() && resource.data.uid == request.auth.uid;
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['talk_id', 'uid', 'key', 'expires_at'])
+        && request.resource.data.uid == request.auth.uid
+        && claimId == request.resource.data.talk_id + '_' + request.auth.uid
+        && active(request.resource.data.talk_id)
+        && request.resource.data.key
+          == get(/databases/$(database)/documents/moderatorKeys/$(request.resource.data.talk_id)).data.key
+        && request.resource.data.expires_at == talk(request.resource.data.talk_id).expires_at;
+      allow update: if false;
+      allow delete: if signedIn() && request.auth.uid == resource.data.uid
+        && request.time >= resource.data.expires_at;
+    }
+  }
+}
