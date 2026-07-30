@@ -71,8 +71,33 @@ export async function createTalk({ talkId, talkTitle, defaultPublishMode, modera
     key: moderatorKey,
     expires_at: expiresAt,
   });
+  batch.set(doc(database, 'talkDirectory', talkId), {
+    talk_id: talkId,
+    created_at: createdAt,
+    expires_at: expiresAt,
+  });
   await batch.commit();
   return { ...settings, created_at: createdAt.toMillis(), expires_at: expiresAt.toMillis() };
+}
+
+export async function subscribeToActiveTalks(onTalks, onError) {
+  await ensureSignedIn();
+  const activeTalks = query(
+    collection(database, 'talkDirectory'),
+    where('expires_at', '>', Timestamp.now()),
+  );
+  return onSnapshot(activeTalks, (snapshot) => {
+    const talks = snapshot.docs.map((talkSnapshot) => {
+      const value = talkSnapshot.data();
+      return {
+        talk_id: value.talk_id,
+        created_at: value.created_at.toMillis(),
+        expires_at: value.expires_at.toMillis(),
+      };
+    });
+    talks.sort((first, second) => first.expires_at - second.expires_at);
+    onTalks(talks);
+  }, onError);
 }
 
 export async function getTalkSettings(talkId) {
@@ -196,6 +221,7 @@ export async function deleteExpiredTalk(talkId, settings, questionIds = []) {
     batch.delete(doc(database, 'talks', talkId, 'questions', questionId));
   }
   batch.delete(doc(database, 'moderatorKeys', talkId));
+  batch.delete(doc(database, 'talkDirectory', talkId));
   batch.delete(doc(database, 'talks', talkId));
   await batch.commit();
   return true;

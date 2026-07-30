@@ -1,9 +1,10 @@
-import { createTalk } from './firebase-store.js';
+import { createTalk, subscribeToActiveTalks } from './firebase-store.js';
 import { renderQr } from './qr.js';
 import {
   buildTalkUrl,
   copyText,
   downloadCanvas,
+  formatRemaining,
   randomId,
   randomPin,
   setNotice,
@@ -12,6 +13,58 @@ import {
 const $ = (id) => document.getElementById(id);
 const notice = $('notice');
 const outputs = $('outputs');
+let directoryTalks = [];
+let stopDirectory;
+let directoryTimer;
+
+function renderTalkDirectory() {
+  const list = $('directoryList');
+  const activeTalks = directoryTalks.filter((talk) => talk.expires_at > Date.now());
+  list.innerHTML = '';
+  if (!activeTalks.length) {
+    const empty = document.createElement('li');
+    empty.className = 'empty';
+    empty.textContent = '目前沒有尚未到期的調查。';
+    list.append(empty);
+    return;
+  }
+  for (const talk of activeTalks) {
+    const item = document.createElement('li');
+    item.className = 'directory-item';
+    const id = document.createElement('code');
+    id.textContent = talk.talk_id;
+    const remaining = document.createElement('span');
+    remaining.className = 'directory-remaining';
+    remaining.textContent = `剩餘 ${formatRemaining(talk.expires_at)}`;
+    item.append(id, remaining);
+    list.append(item);
+  }
+}
+
+function closeTalkDirectory() {
+  stopDirectory?.();
+  stopDirectory = undefined;
+  clearInterval(directoryTimer);
+  directoryTimer = undefined;
+}
+
+async function openTalkDirectory() {
+  const dialog = $('talkDirectoryDialog');
+  dialog.showModal();
+  $('directoryStatus').textContent = '正在讀取…';
+  try {
+    stopDirectory = await subscribeToActiveTalks((talks) => {
+      directoryTalks = talks;
+      $('directoryStatus').textContent = `共 ${talks.filter((talk) => talk.expires_at > Date.now()).length} 個尚未到期的調查`;
+      renderTalkDirectory();
+    }, () => {
+      $('directoryStatus').textContent = '讀取失敗，請稍後再試。';
+    });
+    directoryTimer = setInterval(renderTalkDirectory, 30000);
+  } catch {
+    $('directoryStatus').textContent = '讀取失敗，請稍後再試。';
+  }
+}
 
 function newTalkId() {
   $('talkId').value = randomId('talk');
@@ -113,3 +166,6 @@ async function generate() {
 newTalkId();
 $('newId').onclick = newTalkId;
 $('generate').onclick = generate;
+$('directoryTrigger').onclick = openTalkDirectory;
+$('directoryClose').onclick = () => $('talkDirectoryDialog').close();
+$('talkDirectoryDialog').onclose = closeTalkDirectory;

@@ -10,7 +10,7 @@
   <header class="site-header">
     <div class="container project-title">
       <div class="logo">Q</div>
-      <div><h1>TalkQ 演講提問器</h1><p>Firebase 即時同步，聽眾匿名提問</p></div>
+      <div><h1>TalkQ 演講提問器</h1></div>
     </div>
   </header>
   <main class="main">
@@ -52,6 +52,22 @@
       <section id="outputs" class="links-grid hidden"></section>
     </div>
   </main>
+  <button class="directory-trigger" id="directoryTrigger" type="button" aria-label="查看目前調查 ID" title="查看目前調查 ID">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M15.5 7.5a5.5 5.5 0 1 1-2.1 4.32L22 3.22V7h-3v3h-3v3h-2.22l-1.96-1.96A5.5 5.5 0 0 1 15.5 7.5ZM5 18.5A1.5 1.5 0 1 0 5 15.5a1.5 1.5 0 0 0 0 3Z"/>
+    </svg>
+  </button>
+  <dialog class="talk-directory-dialog" id="talkDirectoryDialog">
+    <div class="directory-heading">
+      <div>
+        <h2>目前調查 ID</h2>
+        <p>僅顯示尚未到期的留言板。</p>
+      </div>
+      <button class="btn directory-close" id="directoryClose" type="button" aria-label="關閉">關閉</button>
+    </div>
+    <div class="sync-line" id="directoryStatus">正在讀取…</div>
+    <ul class="directory-list" id="directoryList"></ul>
+  </dialog>
   <footer class="footer">TalkQ｜Firebase Cloud Firestore｜資料保留三天</footer>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <script type="module" src="js/setup.js"></script>

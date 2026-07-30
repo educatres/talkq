@@ -26,9 +26,11 @@ moderatorKeys/{talkId}
   talk_id, key, expires_at
 moderatorClaims/{talkId_uid}
   talk_id, uid, key, expires_at
+talkDirectory/{talkId}
+  talk_id, created_at, expires_at
 ```
 
-管理頁可讀取完整 `questions`；公開頁的查詢必須同時限制 `visibility == published` 與 `submitter_allows_public == true`，安全規則會拒絕其他資料。
+管理頁可讀取完整 `questions`；公開頁的查詢必須同時限制 `visibility == published` 與 `submitter_allows_public == true`，安全規則會拒絕其他資料。首頁右下角的鑰匙入口只讀取 `talkDirectory`，因此不會公開標題、管理密鑰或使用者 UID。
 
 ## 4. 權限
 

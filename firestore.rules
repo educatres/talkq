@@ -41,6 +41,13 @@ service cloud.firestore {
         && data.expires_at == data.created_at + duration.value(3, 'd');
     }
 
+    function validTalkDirectory(data, talkId) {
+      return data.keys().hasOnly(['talk_id', 'created_at', 'expires_at'])
+        && data.talk_id == talkId
+        && data.created_at == getAfter(talkPath(talkId)).data.created_at
+        && data.expires_at == getAfter(talkPath(talkId)).data.expires_at;
+    }
+
     match /talks/{talkId} {
       allow get: if signedIn();
       allow list: if false;
@@ -110,6 +117,16 @@ service cloud.firestore {
           && request.resource.data.updated_at <= request.time + duration.value(1, 'm');
         allow delete: if signedIn() && request.time >= resource.data.expires_at;
       }
+    }
+
+    match /talkDirectory/{talkId} {
+      allow get, list: if signedIn();
+      allow create: if signedIn()
+        && existsAfter(talkPath(talkId))
+        && getAfter(talkPath(talkId)).data.owner_uid == request.auth.uid
+        && validTalkDirectory(request.resource.data, talkId);
+      allow update: if false;
+      allow delete: if signedIn() && request.time >= resource.data.expires_at;
     }
 
     match /moderatorKeys/{talkId} {
